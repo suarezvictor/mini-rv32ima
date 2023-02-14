@@ -1,11 +1,11 @@
 all : mini-rv32ima mini-rv32ima.flt
 
-mini-rv32ima : mini-rv32ima.c mini-rv32ima.h default64mbdtc.h
+mini-rv32ima : mini-rv32ima.cpp mini-rv32ima.h default64mbdtc.h
 	# for debug
-	gcc -o $@ $< -g -O4 -Wall
+	g++ -o $@ $< -g -O4 -Wall
 	gcc -o $@.tiny $< -Os -ffunction-sections -fdata-sections -Wl,--gc-sections -fwhole-program -s
 
-mini-rv32ima.flt : mini-rv32ima.c mini-rv32ima.h
+mini-rv32ima.flt : mini-rv32ima.cpp mini-rv32ima.h
 	../buildroot/output/host/bin/riscv32-buildroot-linux-uclibc-gcc -O4 -funroll-loops -s -march=rv32ima -mabi=ilp32 -fPIC $< -Wl,-elf2flt=-r -o $@
 
 # Deply with:  make clean all && cp mini-rv32ima.flt ../buildroot/output/target/root/ && make -C .. toolchain && make testkern

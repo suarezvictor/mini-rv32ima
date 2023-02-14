@@ -93,43 +93,40 @@ struct MiniRV32IMAState
 	// Bits 0..1 = privilege.
 	// Bit 2 = WFI (Wait for interrupt)
 	uint32_t extraflags; 
+
+
 };
 
-MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint8_t * image, uint32_t vProcAddress, uint32_t elapsedUs, int count );
-
 #ifdef MINIRV32_IMPLEMENTATION
+
+struct MiniRV32IMAStateEx : public MiniRV32IMAState
+{
+uint32_t ir;
+uint32_t trap;
+uint32_t rval;
+uint32_t rdid;
+uint32_t pc_next;
+};
+
 
 #define CSR( x ) state->x
 #define SETCSR( x, val ) { state->x = val; }
 #define REG( x ) state->regs[x]
 #define REGSET( x, val ) { state->regs[x] = val; }
 
-MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint8_t * image, uint32_t vProcAddress, uint32_t elapsedUs, int count )
+MINIRV32_DECORATE int32_t MiniRV32IMAStep0( struct MiniRV32IMAStateEx * state, uint8_t * image, uint32_t vProcAddress)
 {
-	uint32_t new_timer = CSR( timerl ) + elapsedUs;
-	if( new_timer < CSR( timerl ) ) CSR( timerh )++;
-	CSR( timerl ) = new_timer;
+uint32_t& ir = state->ir;
+uint32_t& trap = state->trap;
+uint32_t& rval = state->rval;
+uint32_t& rdid = state->rdid;
+uint32_t& pc_next = state->pc_next;
+	
 
-	// Handle Timer interrupt.
-	if( ( CSR( timerh ) > CSR( timermatchh ) || ( CSR( timerh ) == CSR( timermatchh ) && CSR( timerl ) > CSR( timermatchl ) ) ) && ( CSR( timermatchh ) || CSR( timermatchl ) ) )
-	{
-		CSR( extraflags ) &= ~4; // Clear WFI
-		CSR( mip ) |= 1<<7; //MSIP of MIP // https://stackoverflow.com/a/61916199/2926815  Fire interrupt.
-	}
-	else
-		CSR( mip ) &= ~(1<<7);
-
-	// If WFI, don't run processor.
-	if( CSR( extraflags ) & 4 )
-		return 1;
-
-	int icount;
-
-	for( icount = 0; icount < count; icount++ )
-	{
-		uint32_t ir = 0;
-		uint32_t trap = 0; // If positive, is a trap or interrupt.  If negative, is fatal error.
-		uint32_t rval = 0;
+		ir = 0;
+		trap = 0; // If positive, is a trap or interrupt.  If negative, is fatal error.
+		rval = 0;
+		rdid = 0;
 
 		// Increment both wall-clock and instruction count time.  (NOTE: Not strictly needed to run Linux)
 		CSR( cyclel )++;
@@ -145,7 +142,7 @@ MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint
 		else
 		{
 			ir = MINIRV32_LOAD4( ofs_pc );
-			uint32_t rdid = (ir >> 7) & 0x1f;
+			rdid = (ir >> 7) & 0x1f;
 
 			switch( ir & 0x7f )
 			{
@@ -465,6 +462,21 @@ MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint
 				}
 				default: trap = (2+1); // Fault: Invalid opcode.
 			}
+		}
+
+	pc_next = pc;
+	return 0;
+}
+
+MINIRV32_DECORATE int32_t MiniRV32IMAStep1( struct MiniRV32IMAStateEx * state, uint8_t * image, uint32_t vProcAddress)
+{
+uint32_t& ir = state->ir;
+uint32_t& trap = state->trap;
+uint32_t& rval = state->rval;
+uint32_t& rdid = state->rdid;
+uint32_t& pc_next = state->pc_next;
+
+		uint32_t pc = pc_next;
 
 			if( trap == 0 )
 			{
@@ -477,7 +489,6 @@ MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint
 					trap = 0x80000007; // Timer interrupt.
 				}
 			}
-		}
 
 		MINIRV32_POSTEXEC( pc, ir, trap );
 
@@ -507,6 +518,42 @@ MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint
 		}
 
 		SETCSR( pc, pc + 4 );
+		return 0;
+}
+
+MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint8_t * image, uint32_t vProcAddress, uint32_t elapsedUs, int count );
+
+
+MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint8_t * image, uint32_t vProcAddress, uint32_t elapsedUs, int count )
+{
+	uint32_t new_timer = CSR( timerl ) + elapsedUs;
+	if( new_timer < CSR( timerl ) ) CSR( timerh )++;
+	CSR( timerl ) = new_timer;
+
+	// Handle Timer interrupt.
+	if( ( CSR( timerh ) > CSR( timermatchh ) || ( CSR( timerh ) == CSR( timermatchh ) && CSR( timerl ) > CSR( timermatchl ) ) ) && ( CSR( timermatchh ) || CSR( timermatchl ) ) )
+	{
+		CSR( extraflags ) &= ~4; // Clear WFI
+		CSR( mip ) |= 1<<7; //MSIP of MIP // https://stackoverflow.com/a/61916199/2926815  Fire interrupt.
+	}
+	else
+		CSR( mip ) &= ~(1<<7);
+
+	// If WFI, don't run processor.
+	if( CSR( extraflags ) & 4 )
+		return 1;
+
+	int icount;
+	for( icount = 0; icount < count; icount++ )
+	{
+	  int32_t r = MiniRV32IMAStep0((MiniRV32IMAStateEx *) state, image, vProcAddress);
+	  if(r)
+	    return r;
+
+	  r = MiniRV32IMAStep1((MiniRV32IMAStateEx *) state, image, vProcAddress);
+	  if(r)
+	    return r;
+
 	}
 	return 0;
 }
