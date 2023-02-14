@@ -160,7 +160,7 @@ uint32_t& rval = state->rval;
 uint8_t& rdid = state->rdid;
 bool& ifetch = state->ifetch;		
 uint32_t& raddr = state->raddr;
-raddr = MINI_RV32_RAM_SIZE;
+raddr = (uint32_t)-1;
 
 		rdid = 0;
 		rval = 0;
@@ -236,7 +236,7 @@ raddr = MINI_RV32_RAM_SIZE;
 							else
 							{
 							    raddr = rsval;
-								MINIRV32_HANDLE_MEM_LOAD_CONTROL( raddr, rval );
+								MINIRV32_REQLOAD4(raddr, rval); //was //MINIRV32_HANDLE_MEM_LOAD_CONTROL( raddr, rval );
 							}
 						}
 						else
@@ -248,7 +248,7 @@ raddr = MINI_RV32_RAM_SIZE;
 					else
 					{
 					    raddr = rsval;
-						return 0;
+						MINIRV32_REQLOAD4(raddr, rval);
 					}
 					break;
 				}
@@ -482,19 +482,29 @@ uint32_t& trap = state->trap;
 uint32_t& rval = state->rval;
 uint32_t& raddr = state->raddr;
 
-	if((ir & 0x7f) == 0b0000011 && raddr < MINI_RV32_RAM_SIZE-3) // Load
-	{
+if(raddr == (uint32_t) -1)
+  return 0;
 
-						switch( ( ir >> 12 ) & 0x7 )
-						{
-							//LB, LH, LW, LBU, LHU
-							case 0b000: rval = (int8_t)MINIRV32_LOAD1( raddr ); break;
-							case 0b001: rval = (int16_t)MINIRV32_LOAD2( raddr ); break;
-							case 0b010: rval = MINIRV32_LOAD4( raddr ); break;
-							case 0b100: rval = MINIRV32_LOAD1( raddr ); break;
-							case 0b101: rval = MINIRV32_LOAD2( raddr ); break;
-							default: trap = (2+1);
-						}
+	if((ir & 0x7f) == 0b0000011) //Load
+	{
+		if( raddr >= 0x10000000 && raddr < 0x12000000 )  // UART, CLNT
+		{
+			MINIRV32_HANDLE_MEM_LOAD_CONTROL( raddr, rval );
+		}
+		else
+    	  {
+			switch( ( ir >> 12 ) & 0x7 )
+			{
+				//LB, LH, LW, LBU, LHU
+				case 0b000: rval = (int8_t)MINIRV32_LOAD1( raddr ); break;
+				case 0b001: rval = (int16_t)MINIRV32_LOAD2( raddr ); break;
+				case 0b010: rval = MINIRV32_LOAD4( raddr ); break;
+				case 0b100: rval = MINIRV32_LOAD1( raddr ); break;
+				case 0b101: rval = MINIRV32_LOAD2( raddr ); break;
+				default: trap = (2+1); //FIXME: shoudl be checked earlier
+			}
+	   }
+	   
 	}
 
 
