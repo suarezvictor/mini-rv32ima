@@ -121,7 +121,7 @@ bool ifetch;
 #define REG( x ) state->regs[x]
 #define REGSET( x, val ) { state->regs[x] = val; }
 
-MINIRV32_DECORATE int32_t MiniRV32IMAStep0( struct MiniRV32IMAStateEx * state, uint8_t * image, uint32_t vProcAddress)
+MINIRV32_DECORATE void MiniRV32IMAStep0( struct MiniRV32IMAStateEx * state)
 {
 uint32_t& ir = state->ir;
 uint32_t& trap = state->trap;
@@ -150,8 +150,6 @@ uint32_t& raddr = state->raddr;
 			MINIRV32_REQLOAD4( raddr );
 		}
 		ifetch = !trap;
-		return 0;
-
 }
 
 MINIRV32_DECORATE int32_t MiniRV32IMAStep0b( struct MiniRV32IMAStateEx * state, uint8_t * image, uint32_t vProcAddress)
@@ -279,7 +277,9 @@ raddr = MINI_RV32_RAM_SIZE;
 								return rs2; // NOTE: PC will be PC of Syscon.
 							}
 							else
-								MINIRV32_HANDLE_MEM_STORE_CONTROL( addy, rs2 );
+							{
+								MINIRV32_REQSTORE4(addy, rs2); //was MINIRV32_HANDLE_MEM_STORE_CONTROL( addy, rs2 );
+							}
 						}
 						else
 						{
@@ -577,6 +577,27 @@ uint32_t pc = CSR(pc);
 		return 0;
 }
 
+int32_t handle_store(struct MiniRV32IMAStateEx * state, uint8_t * image)
+{
+
+  if( state->wlen && state->raddr >= MINI_RV32_RAM_SIZE-3 )
+  {
+	MINIRV32_HANDLE_MEM_STORE_CONTROL( state->raddr, state->wval );
+  }
+  else
+  {
+	  switch(state->wlen)
+	  {
+	    case 4: MINIRV32_STORE4(state->raddr, state->wval); break;
+	    case 2: MINIRV32_STORE2(state->raddr, state->wval); break;
+	    case 1: MINIRV32_STORE1(state->raddr, state->wval); break;
+	  }
+  }
+
+  state->wlen = 0;
+  return 0;
+}
+
 MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint8_t * image, uint32_t vProcAddress, uint32_t elapsedUs, int count );
 
 
@@ -602,32 +623,18 @@ MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint
     MiniRV32IMAStateEx *state_ex = (MiniRV32IMAStateEx *) state;
 	for(int icount = 0; icount < count; icount++ )
 	{
-	  MiniRV32IMAStep0(state_ex, image, vProcAddress);
+	  MiniRV32IMAStep0(state_ex);
 	  
 	  if(state_ex->ifetch & state_ex->raddr != MINI_RV32_RAM_SIZE)
 		state_ex->ir = MINIRV32_LOAD4( state_ex->raddr );
 	  
 	  int32_t r = MiniRV32IMAStep0b(state_ex, image, vProcAddress);
-	  
-	  switch(state_ex->wlen)
-	  {
-	    case 4: MINIRV32_STORE4(state_ex->raddr, state_ex->wval); break;
-	    case 2: MINIRV32_STORE2(state_ex->raddr, state_ex->wval); break;
-	    case 1: MINIRV32_STORE1(state_ex->raddr, state_ex->wval); break;
-	  }
-	  state_ex->wlen = 0;
+	  handle_store(state_ex, image);
 	  
 	  if(r == 0)
 	  {
         MiniRV32IMAStep0c(state_ex, image, vProcAddress);
-
-	  switch(state_ex->wlen)
-	  {
-	    case 4: MINIRV32_STORE4(state_ex->raddr, state_ex->wval); break;
-	    case 2: MINIRV32_STORE2(state_ex->raddr, state_ex->wval); break;
-	    case 1: MINIRV32_STORE1(state_ex->raddr, state_ex->wval); break;
-	  }
-	  state_ex->wlen = 0;
+        handle_store(state_ex, image);
 
 		r = MiniRV32IMAStep1(state_ex, image, vProcAddress);
 	    if(r)
