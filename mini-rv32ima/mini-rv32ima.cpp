@@ -6,6 +6,8 @@
 #include <string.h>
 #include <math.h>
 
+//#define _DEBUG
+
 #include "default64mbdtc.h"
 
 // Just default RAM amount is 64MB.
@@ -33,7 +35,10 @@ static int ReadKBByte();
 #define MINIRV32_POSTEXEC( pc, ir, retval ) { if( retval > 0 ) { if( fail_on_all_faults ) { printf( "FAULT\n" ); return 3; } else retval = HandleException( ir, retval ); } }
 #define MINIRV32_HANDLE_MEM_STORE_CONTROL( addy, val ) if( HandleControlStore( addy, val ) ) return val;
 #define MINIRV32_HANDLE_MEM_LOAD_CONTROL( addy, rval ) rval = HandleControlLoad( addy );
+
+#ifdef _DEBUG
 #define MINIRV32_OTHERCSR_WRITE( csrno, value ) HandleOtherCSRWrite( image, csrno, value );
+#endif
 
 #include "mini-rv32ima.h"
 
@@ -408,6 +413,7 @@ static uint32_t HandleControlLoad( uint32_t addy )
 	return 0;
 }
 
+#ifdef _DEBUG
 static void HandleOtherCSRWrite( uint8_t * image, uint16_t csrno, uint32_t value )
 {
 	if( csrno == 0x136 )
@@ -438,6 +444,7 @@ static void HandleOtherCSRWrite( uint8_t * image, uint16_t csrno, uint32_t value
 		}
 	}
 }
+#endif
 
 static int64_t SimpleReadNumberInt( const char * number, int64_t defaultNumber )
 {
