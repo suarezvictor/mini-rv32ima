@@ -105,7 +105,8 @@ uint32_t ir;
 uint32_t trap;
 uint32_t rval;
 uint32_t rdid;
-uint32_t pc_next;
+uint32_t raddr;
+bool ifetch;
 };
 
 
@@ -118,15 +119,13 @@ MINIRV32_DECORATE int32_t MiniRV32IMAStep0( struct MiniRV32IMAStateEx * state, u
 {
 uint32_t& ir = state->ir;
 uint32_t& trap = state->trap;
-uint32_t& rval = state->rval;
-uint32_t& rdid = state->rdid;
-uint32_t& pc_next = state->pc_next;
+bool& ifetch = state->ifetch;
+uint32_t& raddr = state->raddr;
+		raddr = MINI_RV32_RAM_SIZE;
 	
 
 		ir = 0;
 		trap = 0; // If positive, is a trap or interrupt.  If negative, is fatal error.
-		rval = 0;
-		rdid = 0;
 
 		// Increment both wall-clock and instruction count time.  (NOTE: Not strictly needed to run Linux)
 		CSR( cyclel )++;
@@ -141,7 +140,29 @@ uint32_t& pc_next = state->pc_next;
 			trap = 1 + 0;  //Handle PC-misaligned access
 		else
 		{
-			ir = MINIRV32_LOAD4( ofs_pc );
+		    raddr = ofs_pc;
+			ir = MINIRV32_LOAD4( raddr );
+		}
+		ifetch = !trap;
+		return 0;
+
+}
+
+MINIRV32_DECORATE int32_t MiniRV32IMAStep0b( struct MiniRV32IMAStateEx * state, uint8_t * image, uint32_t vProcAddress)
+{
+uint32_t& ir = state->ir;
+uint32_t& trap = state->trap;
+uint32_t& rval = state->rval;
+uint32_t& rdid = state->rdid;
+bool& ifetch = state->ifetch;		
+uint32_t& raddr = state->raddr;
+		rdid = 0;
+		rval = 0;
+
+		uint32_t pc = CSR( pc );
+
+		if(ifetch)
+		{ 
 			rdid = (ir >> 7) & 0x1f;
 
 			switch( ir & 0x7f )
@@ -207,7 +228,10 @@ uint32_t& pc_next = state->pc_next;
 							else if( rsval == 0x1100bff8 )
 								rval = CSR( timerl );
 							else
-								MINIRV32_HANDLE_MEM_LOAD_CONTROL( rsval, rval );
+							{
+							    raddr = rsval;
+								MINIRV32_HANDLE_MEM_LOAD_CONTROL( raddr, rval );
+							}
 						}
 						else
 						{
@@ -217,16 +241,18 @@ uint32_t& pc_next = state->pc_next;
 					}
 					else
 					{
+					    raddr = rsval;
 						switch( ( ir >> 12 ) & 0x7 )
 						{
 							//LB, LH, LW, LBU, LHU
-							case 0b000: rval = (int8_t)MINIRV32_LOAD1( rsval ); break;
-							case 0b001: rval = (int16_t)MINIRV32_LOAD2( rsval ); break;
-							case 0b010: rval = MINIRV32_LOAD4( rsval ); break;
-							case 0b100: rval = MINIRV32_LOAD1( rsval ); break;
-							case 0b101: rval = MINIRV32_LOAD2( rsval ); break;
+							case 0b000: rval = (int8_t)MINIRV32_LOAD1( raddr ); break;
+							case 0b001: rval = (int16_t)MINIRV32_LOAD2( raddr ); break;
+							case 0b010: rval = MINIRV32_LOAD4( raddr ); break;
+							case 0b100: rval = MINIRV32_LOAD1( raddr ); break;
+							case 0b101: rval = MINIRV32_LOAD2( raddr ); break;
 							default: trap = (2+1);
 						}
+						return 0;
 					}
 					break;
 				}
@@ -430,15 +456,39 @@ uint32_t& pc_next = state->pc_next;
 
 					// We don't implement load/store from UART or CLNT with RV32A here.
 
-					if( rs1 >= MINI_RV32_RAM_SIZE-3 )
+					    raddr = rs1;
+					if( raddr >= MINI_RV32_RAM_SIZE-3 )
 					{
 						trap = (7+1); //Store/AMO access fault
-						rval = rs1 + MINIRV32_RAM_IMAGE_OFFSET;
+						rval = raddr + MINIRV32_RAM_IMAGE_OFFSET;
 					}
 					else
 					{
-						rval = MINIRV32_LOAD4( rs1 );
+						rval = MINIRV32_LOAD4( raddr );
+					}
+					break;
+				}
+				default: trap = (2+1); // Fault: Invalid opcode.
+			}
+		}
 
+    SETCSR(pc, pc);
+	return 0;
+}
+
+
+MINIRV32_DECORATE int32_t MiniRV32IMAStep0c( struct MiniRV32IMAStateEx * state, uint8_t * image, uint32_t vProcAddress)
+{
+uint32_t& ir = state->ir;
+uint32_t& trap = state->trap;
+uint32_t& rval = state->rval;
+uint32_t& raddr = state->raddr;
+
+
+	if((ir & 0x7f) == 0b0101111 && raddr < MINI_RV32_RAM_SIZE-3) // RV32A
+	{
+					uint32_t rs2 = REG((ir >> 20) & 0x1f);
+					uint32_t irmid = ( ir>>27 ) & 0x1f;
 						// Referenced a little bit of https://github.com/franzflasch/riscv_em/blob/master/src/core/core.c
 						uint32_t dowrite = 1;
 						switch( irmid )
@@ -456,15 +506,8 @@ uint32_t& pc_next = state->pc_next;
 							case 0b11100: rs2 = (rs2>rval)?rs2:rval; break; //AMOMAXU.W
 							default: trap = (2+1); dowrite = 0; break; //Not supported.
 						}
-						if( dowrite ) MINIRV32_STORE4( rs1, rs2 );
-					}
-					break;
-				}
-				default: trap = (2+1); // Fault: Invalid opcode.
-			}
-		}
-
-	pc_next = pc;
+						if( dowrite ) MINIRV32_STORE4( raddr, rs2 );
+	}
 	return 0;
 }
 
@@ -474,9 +517,7 @@ uint32_t& ir = state->ir;
 uint32_t& trap = state->trap;
 uint32_t& rval = state->rval;
 uint32_t& rdid = state->rdid;
-uint32_t& pc_next = state->pc_next;
-
-		uint32_t pc = pc_next;
+uint32_t pc = CSR(pc);
 
 			if( trap == 0 )
 			{
@@ -543,16 +584,17 @@ MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint
 	if( CSR( extraflags ) & 4 )
 		return 1;
 
-	int icount;
-	for( icount = 0; icount < count; icount++ )
+	for(int icount = 0; icount < count; icount++ )
 	{
-	  int32_t r = MiniRV32IMAStep0((MiniRV32IMAStateEx *) state, image, vProcAddress);
-	  if(r)
-	    return r;
-
-	  r = MiniRV32IMAStep1((MiniRV32IMAStateEx *) state, image, vProcAddress);
-	  if(r)
-	    return r;
+	  MiniRV32IMAStep0((MiniRV32IMAStateEx *) state, image, vProcAddress);
+	  int32_t r = MiniRV32IMAStep0b((MiniRV32IMAStateEx *) state, image, vProcAddress);
+	  if(r == 0)
+	  {
+        MiniRV32IMAStep0c((MiniRV32IMAStateEx *) state, image, vProcAddress);
+		r = MiniRV32IMAStep1((MiniRV32IMAStateEx *) state, image, vProcAddress);
+	    if(r)
+	    	return r;
+	  }
 
 	}
 	return 0;
