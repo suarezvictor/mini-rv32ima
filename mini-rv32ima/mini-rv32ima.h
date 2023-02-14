@@ -57,13 +57,13 @@
 	#define MINIRV32_STORE4( ofs, val ) *(uint32_t*)(image + ofs) = val
 	#define MINIRV32_STORE2( ofs, val ) *(uint16_t*)(image + ofs) = val
 	#define MINIRV32_STORE1( ofs, val ) *(uint8_t*)(image + ofs) = val
-	#define MINIRV32_REQSTORE4( ofs, val ) { state->wval = val; state->wlen = 4; state->radr = ofs; }
-	#define MINIRV32_REQSTORE2( ofs, val ) { state->wval = val; state->wlen = 2; state->radr = ofs; }
-	#define MINIRV32_REQSTORE1( ofs, val ) { state->wval = val; state->wlen = 1; state->radr = ofs; }
+	#define MINIRV32_REQSTORE4( ofs, val ) { state->wval = val; state->wlen = 4; state->busaddr = ofs; }
+	#define MINIRV32_REQSTORE2( ofs, val ) { state->wval = val; state->wlen = 2; state->busaddr = ofs; }
+	#define MINIRV32_REQSTORE1( ofs, val ) { state->wval = val; state->wlen = 1; state->busaddr = ofs; }
 	#define MINIRV32_LOAD4( ofs ) *(uint32_t*)(image + ofs)
 	#define MINIRV32_LOAD2( ofs ) *(uint16_t*)(image + ofs)
 	#define MINIRV32_LOAD1( ofs ) *(uint8_t*)(image + ofs)
-	#define MINIRV32_REQLOAD4(ofs) { state->radr = ofs; state->rdreq = 1; }
+	#define MINIRV32_REQLOAD4(ofs) { state->busaddr = ofs; state->rdreq = 1; }
 #endif
 
 // As a note: We quouple-ify these, because in HLSL, we will be operating with
@@ -108,7 +108,7 @@ struct MiniRV32IMAStateEx : public MiniRV32IMAState
 uint32_t ir;
 uint32_t trap;
 uint32_t rval, wval;
-uint32_t radr;
+uint32_t busaddr;
 uint8_t rdid, wlen;
 bool ifetch, rdreq;
 };
@@ -461,7 +461,7 @@ MINIRV32_DECORATE void MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * state, 
   uint32_t& ir = state->ir;
   uint32_t& trap = state->trap;
   uint32_t& rval = state->rval;
-  uint32_t raddr = state->radr;
+  uint32_t raddr = state->busaddr;
 
   if(!state->rdreq)
     return;
@@ -568,17 +568,17 @@ uint32_t pc = CSR(pc);
 int32_t MiniRV32IMAStep_store(struct MiniRV32IMAStateEx * state, uint8_t * image)
 {
 
-  if( state->wlen && state->radr >= MINI_RV32_RAM_SIZE-3 )
+  if( state->wlen && state->busaddr >= MINI_RV32_RAM_SIZE-3 )
   {
-	MINIRV32_HANDLE_MEM_STORE_CONTROL( state->radr, state->wval );
+	MINIRV32_HANDLE_MEM_STORE_CONTROL( state->busaddr, state->wval );
   }
   else
   {
 	  switch(state->wlen)
 	  {
-	    case 4: MINIRV32_STORE4(state->radr, state->wval); break;
-	    case 2: MINIRV32_STORE2(state->radr, state->wval); break;
-	    case 1: MINIRV32_STORE1(state->radr, state->wval); break;
+	    case 4: MINIRV32_STORE4(state->busaddr, state->wval); break;
+	    case 2: MINIRV32_STORE2(state->busaddr, state->wval); break;
+	    case 1: MINIRV32_STORE1(state->busaddr, state->wval); break;
 	  }
   }
 
@@ -615,7 +615,7 @@ MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint
 	  
 	  if(state_ex->ifetch)
 	  {
-		state_ex->ir = MINIRV32_LOAD4( state_ex->radr );
+		state_ex->ir = MINIRV32_LOAD4( state_ex->busaddr );
 	    MiniRV32IMAStep_decode(state_ex, state_ex->ir);
 
 		MiniRV32IMAStep_load(state_ex, image);
