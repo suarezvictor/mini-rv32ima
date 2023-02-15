@@ -1,6 +1,8 @@
 // Copyright 2022 Charles Lohr
 // Copyright 2023 Victor Suarez Rovere
 
+//#define MINIRV32_EXEC_IN_PHASES
+
 #ifndef _MINI_RV32IMAH_H
 #define _MINI_RV32IMAH_H
 
@@ -65,6 +67,9 @@
 	#define MINIRV32_LOAD2( adr ) *(uint16_t*)(image + adr - MINIRV32_RAM_IMAGE_OFFSET)
 	#define MINIRV32_LOAD1( adr ) *(uint8_t*)(image + adr - MINIRV32_RAM_IMAGE_OFFSET)
 	#define MINIRV32_REQLOAD4(adr) { state->busaddr = adr; state->rdreq = true; }
+	
+	#define MINIRV32_IS_IO_ADDR(adr) ((adr) >= 0x10000000 && (adr) < 0x12000000)
+	#define MINIRV32_IS_RAM_ADDR(adr) ((adr) - MINIRV32_RAM_IMAGE_OFFSET < MINI_RV32_RAM_SIZE-3)
 #endif
 
 // As a note: We quouple-ify these, because in HLSL, we will be operating with
@@ -102,7 +107,6 @@ struct MiniRV32IMAState
 
 };
 
-#ifdef MINIRV32_IMPLEMENTATION
 
 struct MiniRV32IMAStateEx : public MiniRV32IMAState
 {
@@ -114,6 +118,11 @@ uint8_t rdid, wreq_len;
 bool fetch_req, rdreq;
 };
 
+#endif //_MINI_RV32IMAH_H
+
+
+
+#ifdef MINIRV32_IMPLEMENTATION
 
 #define CSR( x ) state->x
 #define SETCSR( x, val ) { state->x = val; }
@@ -407,11 +416,11 @@ MINIRV32_DECORATE uint32_t MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * sta
 
 	if((state->ir & 0x7f) == 0b0000011) //Load
 	{
-		if( raddr >= 0x10000000 && raddr < 0x12000000 )  // UART, CLNT
+		if(MINIRV32_IS_IO_ADDR(raddr))  // UART, CLNT
 		{
 			MINIRV32_HANDLE_MEM_LOAD_CONTROL( raddr, rval );
 		}
-		else if(raddr - MINIRV32_RAM_IMAGE_OFFSET < MINI_RV32_RAM_SIZE-3)
+		else if(MINIRV32_IS_RAM_ADDR(raddr))
     	  {
 			switch( ( state->ir >> 12 ) & 0x7 )
 			{
@@ -441,7 +450,7 @@ MINIRV32_DECORATE uint32_t MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * sta
 
 	if((ir & 0x7f) == 0b0101111) // RV32A
 	{
-		if(raddr - MINIRV32_RAM_IMAGE_OFFSET < MINI_RV32_RAM_SIZE-3)
+		if(MINIRV32_IS_RAM_ADDR(raddr))
 		{
 						rval = MINIRV32_LOAD4( raddr);
 
@@ -533,11 +542,11 @@ int32_t MiniRV32IMAStep_store(struct MiniRV32IMAStateEx * state, uint8_t * image
   uint32_t& rval = state->rval;
   uint32_t waddr = state->busaddr;
   
-  if(waddr >= 0x10000000 && waddr < 0x12000000)
+  if(MINIRV32_IS_IO_ADDR(waddr))
   {
 	MINIRV32_HANDLE_MEM_STORE_CONTROL(waddr, state->wval );
   }
-  else if(state->busaddr - MINIRV32_RAM_IMAGE_OFFSET < MINI_RV32_RAM_SIZE-3)
+  else if(MINIRV32_IS_RAM_ADDR(state->busaddr))
   {
 	  switch(state->wreq_len)
 	  {
@@ -558,31 +567,16 @@ int32_t MiniRV32IMAStep_store(struct MiniRV32IMAStateEx * state, uint8_t * image
 bool MiniRV32IMAStep_phase(struct MiniRV32IMAStateEx * state, bool rbusy, bool wbusy, uint8_t * image)
 {
 	bool done = false;
-	
-	if(!state->fetch_req && !state->rdreq && !state->wreq_len)
-	{
-		MiniRV32IMAStep_fetch(state);
-		state->fetch_req = true;
-#ifdef MINIRV32_EXEC_IN_PHASES
-		return done;
-#endif
-	}
+	bool stall;
 
+    stall = false;
 	if(state->fetch_req)
 	{
 		if(!rbusy)
 		{
 			state->ir = MINIRV32_LOAD4(state->busaddr);
-			state->fetch_req = false;
-			state->rdreq = false; //clear, since previously set by fetch
-			MiniRV32IMAStep_decode(state, state->ir);
-			done = !state->rdreq && !state->wreq_len;
-			if(done)
-				 MiniRV32IMAStep_retire(state);
 		}
-#ifdef MINIRV32_EXEC_IN_PHASES
-		return done;
-#endif
+  		stall |= rbusy;
 	}
 
 	if(state->rdreq && !state->fetch_req)
@@ -590,25 +584,59 @@ bool MiniRV32IMAStep_phase(struct MiniRV32IMAStateEx * state, bool rbusy, bool w
 		if(!rbusy)
 		{
 			state->rval = MiniRV32IMAStep_load(state, state->busaddr, image);
-			state->rdreq = false;
-			done = !state->wreq_len;
-			if(done)
-				MiniRV32IMAStep_retire(state);
 		}
-#ifdef MINIRV32_EXEC_IN_PHASES
-		return done;
-#endif
+  		stall |= rbusy;
 	}
+
 
 	if(state->wreq_len)
 	{
 		if(!wbusy)
 		{
-			done = true;
 			MiniRV32IMAStep_store(state, image);
-			state->wreq_len = 0;
-			MiniRV32IMAStep_retire(state);
 		}
+		stall |= wbusy;
+	}
+
+	if(state->fetch_req && !stall)
+	{
+		state->fetch_req = false;
+		state->rdreq = false; //clear, since previously set by fetch
+		MiniRV32IMAStep_decode(state, state->ir);
+		done = !state->rdreq && !state->wreq_len;
+		if(done)
+			 MiniRV32IMAStep_retire(state);
+//#ifdef MINIRV32_EXEC_IN_PHASES
+		return done;
+//#endif
+	}
+
+	if(state->rdreq && !state->fetch_req && !stall)
+	{
+		state->rdreq = false;
+		done = !state->wreq_len;
+		if(done)
+			MiniRV32IMAStep_retire(state);
+#ifdef MINIRV32_EXEC_IN_PHASES
+		return done;
+#endif
+	}
+
+	if(state->wreq_len && !stall)
+	{
+		done = true;
+		state->wreq_len = 0;
+		MiniRV32IMAStep_retire(state);
+#ifdef MINIRV32_EXEC_IN_PHASES
+		return done;
+#endif
+	}
+	
+	
+	if(!state->fetch_req && !state->rdreq && !state->wreq_len)
+	{
+		MiniRV32IMAStep_fetch(state);
+		state->fetch_req = true;
 #ifdef MINIRV32_EXEC_IN_PHASES
 		return done;
 #endif
@@ -674,8 +702,7 @@ MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint
 	return 0;
 }
 
-#endif
 
-#endif
+#endif //MINIRV32_IMPLEMENTATION
 
 
