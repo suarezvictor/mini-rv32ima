@@ -566,39 +566,35 @@ int32_t MiniRV32IMAStep_store(struct MiniRV32IMAStateEx * state, uint8_t * image
 
 bool MiniRV32IMAStep_phase(struct MiniRV32IMAStateEx * state, bool rbusy, bool wbusy, uint8_t * image)
 {
-	bool done = false;
-	bool stall;
-
-    stall = false;
+	bool stall = false;
 	if(state->fetch_req)
 	{
 		if(!rbusy)
-		{
 			state->ir = MINIRV32_LOAD4(state->busaddr);
-		}
   		stall |= rbusy;
 	}
 
 	if(state->rdreq && !state->fetch_req)
 	{
 		if(!rbusy)
-		{
 			state->rval = MiniRV32IMAStep_load(state, state->busaddr, image);
-		}
   		stall |= rbusy;
 	}
-
 
 	if(state->wreq_len)
 	{
 		if(!wbusy)
-		{
 			MiniRV32IMAStep_store(state, image);
-		}
 		stall |= wbusy;
 	}
+    
+    return !stall;
+}
 
-	if(state->fetch_req && !stall)
+bool MiniRV32IMAStep_phase2(struct MiniRV32IMAStateEx * state)
+{
+	bool done = false;
+	if(state->fetch_req)
 	{
 		state->fetch_req = false;
 		state->rdreq = false; //clear, since previously set by fetch
@@ -606,12 +602,15 @@ bool MiniRV32IMAStep_phase(struct MiniRV32IMAStateEx * state, bool rbusy, bool w
 		done = !state->rdreq && !state->wreq_len;
 		if(done)
 			 MiniRV32IMAStep_retire(state);
-//#ifdef MINIRV32_EXEC_IN_PHASES
+#ifdef MINIRV32_EXEC_IN_PHASES
 		return done;
-//#endif
+#else
+		if(!done)
+			return done;
+#endif
 	}
 
-	if(state->rdreq && !state->fetch_req && !stall)
+	if(state->rdreq && !state->fetch_req)
 	{
 		state->rdreq = false;
 		done = !state->wreq_len;
@@ -622,7 +621,7 @@ bool MiniRV32IMAStep_phase(struct MiniRV32IMAStateEx * state, bool rbusy, bool w
 #endif
 	}
 
-	if(state->wreq_len && !stall)
+	if(state->wreq_len)
 	{
 		done = true;
 		state->wreq_len = 0;
@@ -686,7 +685,10 @@ MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint
    	    wbusy = state_ex->wreq_len != 0;
 #endif
 	  if(MiniRV32IMAStep_phase(state_ex, rbusy, wbusy, image))
- 	    ++icount;
+	  {
+		  if(MiniRV32IMAStep_phase2(state_ex))
+ 		    ++icount;
+ 	  }
  	    
  	  if(state_ex->fetch_req || state_ex->rdreq)
  	  {
