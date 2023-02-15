@@ -129,15 +129,7 @@ MINIRV32_DECORATE void MiniRV32IMAStep_fetch( struct MiniRV32IMAStateEx * state)
 		if( CSR( cyclel ) == 0 ) CSR( cycleh )++;
 
 		uint32_t pc = CSR( pc );
-
-		if( pc - MINIRV32_RAM_IMAGE_OFFSET  >= MINI_RV32_RAM_SIZE )
-			state->trap = 1 + 1;  // Handle access violation on instruction read.
-		else if( pc & 3 )
-			state->trap = 1 + 0;  //Handle PC-misaligned access
-		else
-		{
-			MINIRV32_REQLOAD4( pc );
-		}
+		MINIRV32_REQLOAD4( pc );
 		state->ifetch = !state->trap;
 }
 
@@ -398,18 +390,6 @@ state->rdreq = false;
 				case 0b0101111: // RV32A
 				{
 					uint32_t rs1 = REG((ir >> 15) & 0x1f);
-					uint32_t rs2 = REG((ir >> 20) & 0x1f);
-					uint32_t irmid = ( ir>>27 ) & 0x1f;
-
-					//rs1 -= MINIRV32_RAM_IMAGE_OFFSET;
-
-					// We don't implement load/store from UART or CLNT with RV32A here.
-
-					if( rs1 - MINIRV32_RAM_IMAGE_OFFSET >= MINI_RV32_RAM_SIZE-3 )
-					{
-						trap = (7+1); //Store/AMO access fault
-						rval = rs1;
-					}
 					MINIRV32_REQLOAD4( rs1 );
 					break;
 				}
@@ -452,6 +432,13 @@ MINIRV32_DECORATE void MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * state, 
 				default: state->trap = (2+1); //FIXME: shoudl be checked earlier
 			}
 	   }
+	   else if(state->ifetch)
+	   {
+		if( raddr & 3 )
+			state->trap = 1 + 0;  //Handle PC-misaligned access
+		else
+			state->trap = 1 + 1;  // Handle access violation on instruction read.
+	   }
 	   else
 	   {
 			trap = (5+1);
@@ -460,8 +447,10 @@ MINIRV32_DECORATE void MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * state, 
 	}
 
 
-	if((ir & 0x7f) == 0b0101111 && raddr - MINIRV32_RAM_IMAGE_OFFSET < MINI_RV32_RAM_SIZE-3) // RV32A
+	if((ir & 0x7f) == 0b0101111) // RV32A
 	{
+		if(raddr - MINIRV32_RAM_IMAGE_OFFSET < MINI_RV32_RAM_SIZE-3)
+		{
 						rval = MINIRV32_LOAD4( raddr - MINIRV32_RAM_IMAGE_OFFSET);
 
 					uint32_t rs2 = REG((ir >> 20) & 0x1f);
@@ -484,7 +473,17 @@ MINIRV32_DECORATE void MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * state, 
 							default: trap = (2+1); dowrite = 0; break; //Not supported.
 						}
 						if( dowrite ) MINIRV32_REQSTORE4( raddr, rs2 );
+		}
+		else
+		{
+			// We don't implement load/store from UART or CLNT with RV32A here.
+			
+			trap = (7+1); //Store/AMO access fault
+			rval = raddr;
+		}
 	}
+	
+	state->ifetch = 0;
 }
 
 MINIRV32_DECORATE void MiniRV32IMAStep_wb( struct MiniRV32IMAStateEx * state)
