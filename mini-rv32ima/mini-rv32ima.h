@@ -130,7 +130,6 @@ MINIRV32_DECORATE void MiniRV32IMAStep_fetch( struct MiniRV32IMAStateEx * state)
 
 		uint32_t pc = CSR( pc );
 		MINIRV32_REQLOAD4( pc );
-		state->fetch_req = !state->trap;
 }
 
 MINIRV32_DECORATE int32_t MiniRV32IMAStep_decode( struct MiniRV32IMAStateEx * state, uint32_t ir)
@@ -563,6 +562,7 @@ bool MiniRV32IMAStep_phase(struct MiniRV32IMAStateEx * state, bool rbusy, bool w
 	if(!state->fetch_req && !state->rdreq && !state->wreq_len)
 	{
 		MiniRV32IMAStep_fetch(state);
+		state->fetch_req = true;
 		return false;
 	}
 
@@ -648,6 +648,16 @@ MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint
 #endif
 	  if(MiniRV32IMAStep_phase(state_ex, rbusy, wbusy, image))
  	    ++icount;
+ 	    
+ 	  if(state_ex->fetch_req || state_ex->rdreq)
+ 	  {
+ 	    //printf("READ REQ address 0x%08X %s\n", state_ex->busaddr, state_ex->fetch_req ? "-> FETCH" : "");
+ 	  }
+
+ 	  if(state_ex->wreq_len)
+ 	  {
+ 	    //printf("WRITE REQ address 0x%08X data 0x%08X\n", state_ex->busaddr, state_ex->wval);
+ 	  }
 
 	}
 	return 0;
