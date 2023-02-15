@@ -55,16 +55,16 @@
 #endif
 
 #ifndef MINIRV32_CUSTOM_MEMORY_BUS
-	#define MINIRV32_STORE4( ofs, val ) *(uint32_t*)(image + ofs) = val
-	#define MINIRV32_STORE2( ofs, val ) *(uint16_t*)(image + ofs) = val
-	#define MINIRV32_STORE1( ofs, val ) *(uint8_t*)(image + ofs) = val
-	#define MINIRV32_REQSTORE4( ofs, val ) { state->wval = val; state->wlen = 4; state->busaddr = ofs; }
-	#define MINIRV32_REQSTORE2( ofs, val ) { state->wval = val; state->wlen = 2; state->busaddr = ofs; }
-	#define MINIRV32_REQSTORE1( ofs, val ) { state->wval = val; state->wlen = 1; state->busaddr = ofs; }
-	#define MINIRV32_LOAD4( ofs ) *(uint32_t*)(image + ofs)
-	#define MINIRV32_LOAD2( ofs ) *(uint16_t*)(image + ofs)
-	#define MINIRV32_LOAD1( ofs ) *(uint8_t*)(image + ofs)
-	#define MINIRV32_REQLOAD4(ofs) { state->busaddr = ofs; state->rdreq = 1; }
+	#define MINIRV32_STORE4( adr, val ) *(uint32_t*)(image + adr - MINIRV32_RAM_IMAGE_OFFSET) = val
+	#define MINIRV32_STORE2( adr, val ) *(uint16_t*)(image + adr - MINIRV32_RAM_IMAGE_OFFSET) = val
+	#define MINIRV32_STORE1( adr, val ) *(uint8_t*)(image + adr - MINIRV32_RAM_IMAGE_OFFSET) = val
+	#define MINIRV32_REQSTORE4( adr, val ) { state->wval = val; state->wreq_len = 4; state->busaddr = adr; }
+	#define MINIRV32_REQSTORE2( adr, val ) { state->wval = val; state->wreq_len = 2; state->busaddr = adr; }
+	#define MINIRV32_REQSTORE1( adr, val ) { state->wval = val; state->wreq_len = 1; state->busaddr = adr; }
+	#define MINIRV32_LOAD4( adr ) *(uint32_t*)(image + adr - MINIRV32_RAM_IMAGE_OFFSET)
+	#define MINIRV32_LOAD2( adr ) *(uint16_t*)(image + adr - MINIRV32_RAM_IMAGE_OFFSET)
+	#define MINIRV32_LOAD1( adr ) *(uint8_t*)(image + adr - MINIRV32_RAM_IMAGE_OFFSET)
+	#define MINIRV32_REQLOAD4(adr) { state->busaddr = adr; state->rdreq = true; }
 #endif
 
 // As a note: We quouple-ify these, because in HLSL, we will be operating with
@@ -110,8 +110,8 @@ uint32_t ir;
 uint32_t trap;
 uint32_t rval, wval;
 uint32_t busaddr;
-uint8_t rdid, wlen;
-bool ifetch, rdreq;
+uint8_t rdid, wreq_len;
+bool fetch_req, rdreq;
 };
 
 
@@ -130,7 +130,7 @@ MINIRV32_DECORATE void MiniRV32IMAStep_fetch( struct MiniRV32IMAStateEx * state)
 
 		uint32_t pc = CSR( pc );
 		MINIRV32_REQLOAD4( pc );
-		state->ifetch = !state->trap;
+		state->fetch_req = !state->trap;
 }
 
 MINIRV32_DECORATE int32_t MiniRV32IMAStep_decode( struct MiniRV32IMAStateEx * state, uint32_t ir)
@@ -139,14 +139,12 @@ state->ir = ir;
 uint32_t& trap = state->trap;
 uint32_t& rval = state->rval;
 uint8_t& rdid = state->rdid;
-state->rdreq = false;
 
 		rdid = 0;
 		rval = 0;
 
 		uint32_t pc = CSR( pc );
 
-		//if(state->ifetch) //should be true
 		{ 
 			rdid = (ir >> 7) & 0x1f;
 
@@ -402,15 +400,11 @@ state->rdreq = false;
 }
 
 
-MINIRV32_DECORATE void MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * state, uint8_t * image)
+MINIRV32_DECORATE uint32_t MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * state, uint32_t raddr, uint8_t * image)
 {
-  if(!state->rdreq)
-    return;
-
   uint32_t& ir = state->ir;
   uint32_t& trap = state->trap;
-  uint32_t& rval = state->rval;
-  uint32_t raddr = state->busaddr;
+  uint32_t rval;
 
 	if((state->ir & 0x7f) == 0b0000011) //Load
 	{
@@ -420,7 +414,6 @@ MINIRV32_DECORATE void MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * state, 
 		}
 		else if(raddr - MINIRV32_RAM_IMAGE_OFFSET < MINI_RV32_RAM_SIZE-3)
     	  {
-		    raddr -= MINIRV32_RAM_IMAGE_OFFSET;
 			switch( ( state->ir >> 12 ) & 0x7 )
 			{
 				//LB, LH, LW, LBU, LHU
@@ -432,7 +425,7 @@ MINIRV32_DECORATE void MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * state, 
 				default: state->trap = (2+1); //FIXME: shoudl be checked earlier
 			}
 	   }
-	   else if(state->ifetch)
+	   else if(state->fetch_req)
 	   {
 		if( raddr & 3 )
 			state->trap = 1 + 0;  //Handle PC-misaligned access
@@ -451,7 +444,7 @@ MINIRV32_DECORATE void MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * state, 
 	{
 		if(raddr - MINIRV32_RAM_IMAGE_OFFSET < MINI_RV32_RAM_SIZE-3)
 		{
-						rval = MINIRV32_LOAD4( raddr - MINIRV32_RAM_IMAGE_OFFSET);
+						rval = MINIRV32_LOAD4( raddr);
 
 					uint32_t rs2 = REG((ir >> 20) & 0x1f);
 					uint32_t irmid = ( ir>>27 ) & 0x1f;
@@ -483,10 +476,10 @@ MINIRV32_DECORATE void MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * state, 
 		}
 	}
 	
-	state->ifetch = 0;
+	return rval;
 }
 
-MINIRV32_DECORATE void MiniRV32IMAStep_wb( struct MiniRV32IMAStateEx * state)
+MINIRV32_DECORATE void MiniRV32IMAStep_retire( struct MiniRV32IMAStateEx * state)
 {
 uint32_t& trap = state->trap;
 uint32_t& rval = state->rval;
@@ -537,9 +530,6 @@ uint32_t pc = CSR(pc);
 
 int32_t MiniRV32IMAStep_store(struct MiniRV32IMAStateEx * state, uint8_t * image)
 {
-  if(!state->wlen)
-    return 0;
-
   uint32_t& trap = state->trap;
   uint32_t& rval = state->rval;
   uint32_t waddr = state->busaddr;
@@ -550,11 +540,11 @@ int32_t MiniRV32IMAStep_store(struct MiniRV32IMAStateEx * state, uint8_t * image
   }
   else if(state->busaddr - MINIRV32_RAM_IMAGE_OFFSET < MINI_RV32_RAM_SIZE-3)
   {
-	  switch(state->wlen)
+	  switch(state->wreq_len)
 	  {
-	    case 4: MINIRV32_STORE4(waddr - MINIRV32_RAM_IMAGE_OFFSET, state->wval); break;
-	    case 2: MINIRV32_STORE2(waddr - MINIRV32_RAM_IMAGE_OFFSET, state->wval); break;
-	    case 1: MINIRV32_STORE1(waddr - MINIRV32_RAM_IMAGE_OFFSET, state->wval); break;
+	    case 4: MINIRV32_STORE4(waddr, state->wval); break;
+	    case 2: MINIRV32_STORE2(waddr, state->wval); break;
+	    case 1: MINIRV32_STORE1(waddr, state->wval); break;
 	  }
   }
   else
@@ -563,9 +553,60 @@ int32_t MiniRV32IMAStep_store(struct MiniRV32IMAStateEx * state, uint8_t * image
 	rval = waddr;
   }
 
-  state->wlen = 0;
   return 0;
 }
+
+bool MiniRV32IMAStep_phase(struct MiniRV32IMAStateEx * state, bool rbusy, bool wbusy, uint8_t * image)
+{
+	bool done = false;
+	
+	if(!state->fetch_req && !state->rdreq && !state->wreq_len)
+	{
+		MiniRV32IMAStep_fetch(state);
+		return false;
+	}
+
+	if(state->fetch_req)
+	{
+		if(!rbusy)
+		{
+			state->ir = MINIRV32_LOAD4(state->busaddr);
+			state->fetch_req = false;
+			state->rdreq = false;
+			MiniRV32IMAStep_decode(state, state->ir);
+			done = !state->rdreq && !state->wreq_len;
+			if(done)
+				 MiniRV32IMAStep_retire(state);
+		}
+		return done;
+	}
+
+	if(state->rdreq)
+	{
+		if(!rbusy)
+		{
+			state->rval = MiniRV32IMAStep_load(state, state->busaddr, image);
+			state->rdreq = false;
+			done = !state->wreq_len;
+			if(done)
+				MiniRV32IMAStep_retire(state);
+		}
+		return done;
+	}
+
+	if(state->wreq_len)
+	{
+		if(!wbusy)
+		{
+			done = true;
+			MiniRV32IMAStep_store(state, image);
+			state->wreq_len = 0;
+			MiniRV32IMAStep_retire(state);
+		}
+		return done;
+	}
+}
+
 
 MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint8_t * image, uint32_t vProcAddress, uint32_t elapsedUs, int count );
 
@@ -589,20 +630,24 @@ MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint
 	if( CSR( extraflags ) & 4 )
 		return 1;
 
+    int icount = 0;
+    bool rbusy = false, wbusy = false;
     MiniRV32IMAStateEx *state_ex = (MiniRV32IMAStateEx *) state;
-	for(int icount = 0; icount < count; icount++ )
+	while(icount < count)
 	{
-	  MiniRV32IMAStep_fetch(state_ex);
-	  
-	  if(state_ex->ifetch)
-	  {
-		state_ex->ir = MINIRV32_LOAD4(state_ex->busaddr - MINIRV32_RAM_IMAGE_OFFSET);
-	    MiniRV32IMAStep_decode(state_ex, state_ex->ir);
+#if 0 //simulate bus stalls
+ 	  if(state_ex->rdreq && rbusy)
+   	    rbusy = false;
+   	  else
+   	    rbusy = state_ex->rdreq;
 
-		MiniRV32IMAStep_load(state_ex, image);
-		MiniRV32IMAStep_store(state_ex, image);
-  		MiniRV32IMAStep_wb(state_ex);
-	  }
+ 	  if(state_ex->wreq_len && wbusy)
+   	    wbusy = false;
+   	  else
+   	    wbusy = state_ex->wreq_len != 0;
+#endif
+	  if(MiniRV32IMAStep_phase(state_ex, rbusy, wbusy, image))
+ 	    ++icount;
 
 	}
 	return 0;
