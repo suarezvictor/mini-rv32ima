@@ -600,8 +600,6 @@ bool MiniRV32IMAStep_phase2(struct MiniRV32IMAStateEx * state)
 		state->rdreq = false; //clear, since previously set by fetch
 		MiniRV32IMAStep_decode(state, state->ir);
 		done = !state->rdreq && !state->wreq_len;
-		if(done)
-			 MiniRV32IMAStep_retire(state);
 #ifdef MINIRV32_EXEC_IN_PHASES
 		return done;
 #else
@@ -609,28 +607,25 @@ bool MiniRV32IMAStep_phase2(struct MiniRV32IMAStateEx * state)
 			return done;
 #endif
 	}
-
+    else
 	if(state->rdreq && !state->fetch_req)
 	{
 		state->rdreq = false;
 		done = !state->wreq_len;
-		if(done)
-			MiniRV32IMAStep_retire(state);
 #ifdef MINIRV32_EXEC_IN_PHASES
 		return done;
 #endif
 	}
-
+    else
 	if(state->wreq_len)
 	{
 		done = true;
 		state->wreq_len = 0;
-		MiniRV32IMAStep_retire(state);
 #ifdef MINIRV32_EXEC_IN_PHASES
 		return done;
 #endif
 	}
-	
+	else
 	
 	if(!state->fetch_req && !state->rdreq && !state->wreq_len)
 	{
@@ -640,7 +635,7 @@ bool MiniRV32IMAStep_phase2(struct MiniRV32IMAStateEx * state)
 		return done;
 #endif
 	}
-	
+
 	return done;
 }
 
@@ -687,7 +682,10 @@ MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint
 	  if(MiniRV32IMAStep_phase(state_ex, rbusy, wbusy, image))
 	  {
 		  if(MiniRV32IMAStep_phase2(state_ex))
+		  {
+  			MiniRV32IMAStep_retire(state_ex);
  		    ++icount;
+ 		  }
  	  }
  	    
  	  if(state_ex->fetch_req || state_ex->rdreq)
