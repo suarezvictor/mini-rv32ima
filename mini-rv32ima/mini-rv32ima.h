@@ -128,15 +128,14 @@ MINIRV32_DECORATE void MiniRV32IMAStep_fetch( struct MiniRV32IMAStateEx * state)
 		if( CSR( cyclel ) == 0 ) CSR( cycleh )++;
 
 		uint32_t pc = CSR( pc );
-		uint32_t ofs_pc = pc - MINIRV32_RAM_IMAGE_OFFSET;
 
-		if( ofs_pc  >= MINI_RV32_RAM_SIZE )
+		if( pc - MINIRV32_RAM_IMAGE_OFFSET  >= MINI_RV32_RAM_SIZE )
 			state->trap = 1 + 1;  // Handle access violation on instruction read.
-		else if( ofs_pc & 3 )
+		else if( pc & 3 )
 			state->trap = 1 + 0;  //Handle PC-misaligned access
 		else
 		{
-			MINIRV32_REQLOAD4( ofs_pc );
+			MINIRV32_REQLOAD4( pc - MINIRV32_RAM_IMAGE_OFFSET );
 		}
 		state->ifetch = !state->trap;
 }
@@ -210,20 +209,16 @@ state->rdreq = false;
 					int32_t imm_se = imm | (( imm & 0x800 )?0xfffff000:0);
 					uint32_t rsval = rs1 + imm_se;
 
-					rsval -= MINIRV32_RAM_IMAGE_OFFSET;
-					if( rsval >= MINI_RV32_RAM_SIZE-3 )
+					if( rsval == 0x1100bffc ) // https://chromitem-soc.readthedocs.io/en/latest/clint.html
+						rval = CSR( timerh );
+					else if( rsval == 0x1100bff8 )
+						rval = CSR( timerl );
+					else
+					if( rsval - MINIRV32_RAM_IMAGE_OFFSET >= MINI_RV32_RAM_SIZE-3 )
 					{
-						rsval -= MINIRV32_RAM_IMAGE_OFFSET;
 						if( rsval >= 0x10000000 && rsval < 0x12000000 )  // UART, CLNT
 						{
-							if( rsval == 0x1100bffc ) // https://chromitem-soc.readthedocs.io/en/latest/clint.html
-								rval = CSR( timerh );
-							else if( rsval == 0x1100bff8 )
-								rval = CSR( timerl );
-							else
-							{
 								MINIRV32_REQLOAD4(rsval); //was //MINIRV32_HANDLE_MEM_LOAD_CONTROL( raddr, rval );
-							}
 						}
 						else
 						{
@@ -233,7 +228,7 @@ state->rdreq = false;
 					}
 					else
 					{
-						MINIRV32_REQLOAD4(rsval);
+						MINIRV32_REQLOAD4(rsval - MINIRV32_RAM_IMAGE_OFFSET);
 					}
 					break;
 				}
@@ -435,16 +430,16 @@ state->rdreq = false;
 					uint32_t rs2 = REG((ir >> 20) & 0x1f);
 					uint32_t irmid = ( ir>>27 ) & 0x1f;
 
-					rs1 -= MINIRV32_RAM_IMAGE_OFFSET;
+					//rs1 -= MINIRV32_RAM_IMAGE_OFFSET;
 
 					// We don't implement load/store from UART or CLNT with RV32A here.
 
-					if( rs1 >= MINI_RV32_RAM_SIZE-3 )
+					if( rs1 - MINIRV32_RAM_IMAGE_OFFSET >= MINI_RV32_RAM_SIZE-3 )
 					{
 						trap = (7+1); //Store/AMO access fault
 						rval = rs1 + MINIRV32_RAM_IMAGE_OFFSET;
 					}
-					MINIRV32_REQLOAD4( rs1 );
+					MINIRV32_REQLOAD4( rs1 - MINIRV32_RAM_IMAGE_OFFSET );
 					break;
 				}
 				default: trap = (2+1); // Fault: Invalid opcode.
