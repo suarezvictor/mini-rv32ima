@@ -1,4 +1,5 @@
-// Copyright 2022 Charles Lohr, you may use this file or any portions herein under any of the BSD, MIT, or CC0 licenses.
+// Copyright 2022 Charles Lohr
+// Copyright 2023 Victor Suarez Rovere
 
 #ifndef _MINI_RV32IMAH_H
 #define _MINI_RV32IMAH_H
@@ -135,7 +136,7 @@ MINIRV32_DECORATE void MiniRV32IMAStep_fetch( struct MiniRV32IMAStateEx * state)
 			state->trap = 1 + 0;  //Handle PC-misaligned access
 		else
 		{
-			MINIRV32_REQLOAD4( pc - MINIRV32_RAM_IMAGE_OFFSET );
+			MINIRV32_REQLOAD4( pc );
 		}
 		state->ifetch = !state->trap;
 }
@@ -228,7 +229,7 @@ state->rdreq = false;
 					}
 					else
 					{
-						MINIRV32_REQLOAD4(rsval - MINIRV32_RAM_IMAGE_OFFSET);
+						MINIRV32_REQLOAD4(rsval);
 					}
 					break;
 				}
@@ -238,36 +239,23 @@ state->rdreq = false;
 					uint32_t rs2 = REG((ir >> 20) & 0x1f);
 					uint32_t addy = ( ( ir >> 7 ) & 0x1f ) | ( ( ir & 0xfe000000 ) >> 20 );
 					if( addy & 0x800 ) addy |= 0xfffff000;
-					addy += rs1 - MINIRV32_RAM_IMAGE_OFFSET;
+					addy += rs1;
 					rdid = 0;
 
-					if( addy >= MINI_RV32_RAM_SIZE-3 )
+					if( addy == 0x11004004 ) //CLNT
+						CSR( timermatchh ) = rs2;
+					else if( addy == 0x11004000 ) //CLNT
+						CSR( timermatchl ) = rs2;
+					else if( addy == 0x11100000 ) //SYSCON (reboot, poweroff, etc.)
 					{
-						addy -= MINIRV32_RAM_IMAGE_OFFSET;
-						if( addy >= 0x10000000 && addy < 0x12000000 ) 
-						{
-							// Should be stuff like SYSCON, 8250, CLNT
-							if( addy == 0x11004004 ) //CLNT
-								CSR( timermatchh ) = rs2;
-							else if( addy == 0x11004000 ) //CLNT
-								CSR( timermatchl ) = rs2;
-							else if( addy == 0x11100000 ) //SYSCON (reboot, poweroff, etc.)
-							{
-								SETCSR( pc, pc + 4 );
-								return rs2; // NOTE: PC will be PC of Syscon.
-							}
-							else
-							{
-								MINIRV32_REQSTORE4(addy, rs2); //was MINIRV32_HANDLE_MEM_STORE_CONTROL( addy, rs2 );
-							}
-						}
-						else
-						{
-							trap = (7+1); // Store access fault.
-							rval = addy + MINIRV32_RAM_IMAGE_OFFSET;
-						}
+						SETCSR( pc, pc + 4 );
+						return rs2; // NOTE: PC will be PC of Syscon.
 					}
-					else
+					else if( addy >= 0x10000000 && addy < 0x12000000 )  // Should be stuff like SYSCON, 8250, CLNT
+					{
+						MINIRV32_REQSTORE4(addy, rs2); //was MINIRV32_HANDLE_MEM_STORE_CONTROL( addy, rs2 );
+					}
+					else if( addy - MINIRV32_RAM_IMAGE_OFFSET < MINI_RV32_RAM_SIZE-3 )
 					{
 						switch( ( ir >> 12 ) & 0x7 )
 						{
@@ -277,6 +265,11 @@ state->rdreq = false;
 							case 0b010: MINIRV32_REQSTORE4( addy, rs2 ); break;
 							default: trap = (2+1);
 						}
+					}
+					else
+					{
+						trap = (7+1); // Store access fault.
+						rval = addy;
 					}
 					break;
 				}
@@ -437,9 +430,9 @@ state->rdreq = false;
 					if( rs1 - MINIRV32_RAM_IMAGE_OFFSET >= MINI_RV32_RAM_SIZE-3 )
 					{
 						trap = (7+1); //Store/AMO access fault
-						rval = rs1 + MINIRV32_RAM_IMAGE_OFFSET;
+						rval = rs1;
 					}
-					MINIRV32_REQLOAD4( rs1 - MINIRV32_RAM_IMAGE_OFFSET );
+					MINIRV32_REQLOAD4( rs1 );
 					break;
 				}
 				default: trap = (2+1); // Fault: Invalid opcode.
@@ -453,13 +446,13 @@ state->rdreq = false;
 
 MINIRV32_DECORATE void MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * state, uint8_t * image)
 {
+  if(!state->rdreq)
+    return;
+
   uint32_t& ir = state->ir;
   uint32_t& trap = state->trap;
   uint32_t& rval = state->rval;
   uint32_t raddr = state->busaddr;
-
-  if(!state->rdreq)
-    return;
 
 	if((state->ir & 0x7f) == 0b0000011) //Load
 	{
@@ -469,6 +462,7 @@ MINIRV32_DECORATE void MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * state, 
 		}
 		else
     	  {
+		    raddr -= MINIRV32_RAM_IMAGE_OFFSET;
 			switch( ( state->ir >> 12 ) & 0x7 )
 			{
 				//LB, LH, LW, LBU, LHU
@@ -480,13 +474,12 @@ MINIRV32_DECORATE void MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * state, 
 				default: state->trap = (2+1); //FIXME: shoudl be checked earlier
 			}
 	   }
-	   
 	}
 
 
-	if((ir & 0x7f) == 0b0101111 && raddr < MINI_RV32_RAM_SIZE-3) // RV32A
+	if((ir & 0x7f) == 0b0101111 && raddr - MINIRV32_RAM_IMAGE_OFFSET < MINI_RV32_RAM_SIZE-3) // RV32A
 	{
-						rval = MINIRV32_LOAD4( raddr );
+						rval = MINIRV32_LOAD4( raddr - MINIRV32_RAM_IMAGE_OFFSET);
 
 					uint32_t rs2 = REG((ir >> 20) & 0x1f);
 					uint32_t irmid = ( ir>>27 ) & 0x1f;
@@ -563,17 +556,17 @@ uint32_t pc = CSR(pc);
 int32_t MiniRV32IMAStep_store(struct MiniRV32IMAStateEx * state, uint8_t * image)
 {
 
-  if( state->wlen && state->busaddr >= MINI_RV32_RAM_SIZE-3 )
+  if( state->wlen && state->busaddr >= 0x10000000 && state->busaddr < 0x12000000)
   {
-	MINIRV32_HANDLE_MEM_STORE_CONTROL( state->busaddr, state->wval );
+	MINIRV32_HANDLE_MEM_STORE_CONTROL(state->busaddr, state->wval );
   }
   else
   {
 	  switch(state->wlen)
 	  {
-	    case 4: MINIRV32_STORE4(state->busaddr, state->wval); break;
-	    case 2: MINIRV32_STORE2(state->busaddr, state->wval); break;
-	    case 1: MINIRV32_STORE1(state->busaddr, state->wval); break;
+	    case 4: MINIRV32_STORE4(state->busaddr - MINIRV32_RAM_IMAGE_OFFSET, state->wval); break;
+	    case 2: MINIRV32_STORE2(state->busaddr - MINIRV32_RAM_IMAGE_OFFSET, state->wval); break;
+	    case 1: MINIRV32_STORE1(state->busaddr - MINIRV32_RAM_IMAGE_OFFSET, state->wval); break;
 	  }
   }
 
@@ -610,7 +603,7 @@ MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint
 	  
 	  if(state_ex->ifetch)
 	  {
-		state_ex->ir = MINIRV32_LOAD4( state_ex->busaddr );
+		state_ex->ir = MINIRV32_LOAD4(state_ex->busaddr - MINIRV32_RAM_IMAGE_OFFSET);
 	    MiniRV32IMAStep_decode(state_ex, state_ex->ir);
 
 		MiniRV32IMAStep_load(state_ex, image);
