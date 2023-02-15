@@ -215,19 +215,6 @@ state->rdreq = false;
 					else if( rsval == 0x1100bff8 )
 						rval = CSR( timerl );
 					else
-					if( rsval - MINIRV32_RAM_IMAGE_OFFSET >= MINI_RV32_RAM_SIZE-3 )
-					{
-						if( rsval >= 0x10000000 && rsval < 0x12000000 )  // UART, CLNT
-						{
-								MINIRV32_REQLOAD4(rsval); //was //MINIRV32_HANDLE_MEM_LOAD_CONTROL( raddr, rval );
-						}
-						else
-						{
-							trap = (5+1);
-							rval = rsval;
-						}
-					}
-					else
 					{
 						MINIRV32_REQLOAD4(rsval);
 					}
@@ -251,11 +238,7 @@ state->rdreq = false;
 						SETCSR( pc, pc + 4 );
 						return rs2; // NOTE: PC will be PC of Syscon.
 					}
-					else if( addy >= 0x10000000 && addy < 0x12000000 )  // Should be stuff like SYSCON, 8250, CLNT
-					{
-						MINIRV32_REQSTORE4(addy, rs2); //was MINIRV32_HANDLE_MEM_STORE_CONTROL( addy, rs2 );
-					}
-					else if( addy - MINIRV32_RAM_IMAGE_OFFSET < MINI_RV32_RAM_SIZE-3 )
+					else
 					{
 						switch( ( ir >> 12 ) & 0x7 )
 						{
@@ -265,11 +248,6 @@ state->rdreq = false;
 							case 0b010: MINIRV32_REQSTORE4( addy, rs2 ); break;
 							default: trap = (2+1);
 						}
-					}
-					else
-					{
-						trap = (7+1); // Store access fault.
-						rval = addy;
 					}
 					break;
 				}
@@ -460,7 +438,7 @@ MINIRV32_DECORATE void MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * state, 
 		{
 			MINIRV32_HANDLE_MEM_LOAD_CONTROL( raddr, rval );
 		}
-		else
+		else if(raddr - MINIRV32_RAM_IMAGE_OFFSET < MINI_RV32_RAM_SIZE-3)
     	  {
 		    raddr -= MINIRV32_RAM_IMAGE_OFFSET;
 			switch( ( state->ir >> 12 ) & 0x7 )
@@ -474,6 +452,11 @@ MINIRV32_DECORATE void MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * state, 
 				default: state->trap = (2+1); //FIXME: shoudl be checked earlier
 			}
 	   }
+	   else
+	   {
+			trap = (5+1);
+			rval = raddr;
+		}							
 	}
 
 
@@ -504,7 +487,7 @@ MINIRV32_DECORATE void MiniRV32IMAStep_load( struct MiniRV32IMAStateEx * state, 
 	}
 }
 
-MINIRV32_DECORATE void MiniRV32IMAStep1_wb( struct MiniRV32IMAStateEx * state)
+MINIRV32_DECORATE void MiniRV32IMAStep_wb( struct MiniRV32IMAStateEx * state)
 {
 uint32_t& trap = state->trap;
 uint32_t& rval = state->rval;
@@ -555,19 +538,30 @@ uint32_t pc = CSR(pc);
 
 int32_t MiniRV32IMAStep_store(struct MiniRV32IMAStateEx * state, uint8_t * image)
 {
+  if(!state->wlen)
+    return 0;
 
-  if( state->wlen && state->busaddr >= 0x10000000 && state->busaddr < 0x12000000)
+  uint32_t& trap = state->trap;
+  uint32_t& rval = state->rval;
+  uint32_t waddr = state->busaddr;
+  
+  if(waddr >= 0x10000000 && waddr < 0x12000000)
   {
-	MINIRV32_HANDLE_MEM_STORE_CONTROL(state->busaddr, state->wval );
+	MINIRV32_HANDLE_MEM_STORE_CONTROL(waddr, state->wval );
   }
-  else
+  else if(state->busaddr - MINIRV32_RAM_IMAGE_OFFSET < MINI_RV32_RAM_SIZE-3)
   {
 	  switch(state->wlen)
 	  {
-	    case 4: MINIRV32_STORE4(state->busaddr - MINIRV32_RAM_IMAGE_OFFSET, state->wval); break;
-	    case 2: MINIRV32_STORE2(state->busaddr - MINIRV32_RAM_IMAGE_OFFSET, state->wval); break;
-	    case 1: MINIRV32_STORE1(state->busaddr - MINIRV32_RAM_IMAGE_OFFSET, state->wval); break;
+	    case 4: MINIRV32_STORE4(waddr - MINIRV32_RAM_IMAGE_OFFSET, state->wval); break;
+	    case 2: MINIRV32_STORE2(waddr - MINIRV32_RAM_IMAGE_OFFSET, state->wval); break;
+	    case 1: MINIRV32_STORE1(waddr - MINIRV32_RAM_IMAGE_OFFSET, state->wval); break;
 	  }
+  }
+  else
+  {
+	trap = (7+1); // Store access fault.
+	rval = waddr;
   }
 
   state->wlen = 0;
@@ -608,7 +602,7 @@ MINIRV32_DECORATE int32_t MiniRV32IMAStep( struct MiniRV32IMAState * state, uint
 
 		MiniRV32IMAStep_load(state_ex, image);
 		MiniRV32IMAStep_store(state_ex, image);
-  		MiniRV32IMAStep1_wb(state_ex);
+  		MiniRV32IMAStep_wb(state_ex);
 	  }
 
 	}
